@@ -19,7 +19,12 @@ pub fn exec_sandboxed(
     let (cmd, args) = command.split_first().unwrap();
 
     let mut child = Command::new("sandbox-exec");
-    child.arg("-f").arg(&profile_path).arg("--").arg(cmd).args(args);
+    child
+        .arg("-f")
+        .arg(&profile_path)
+        .arg("--")
+        .arg(cmd)
+        .args(args);
 
     // Scrub denied env vars
     for pattern in deny_env {
@@ -52,13 +57,34 @@ fn generate_seatbelt_profile(deny_paths: &[String]) -> String {
         // Use literal match for specific files
         if path.contains('*') {
             // Convert glob to regex for Seatbelt
-            let regex = path.replace('.', "\\.").replace('*', ".*");
+            let regex = escape_seatbelt_string(path)
+                .replace('.', "\\.")
+                .replace('*', ".*");
             profile.push_str(&format!("  (regex #\"{}\")\n", regex));
         } else {
-            profile.push_str(&format!("  (literal \"{}\")\n", path));
+            profile.push_str(&format!(
+                "  (literal \"{}\")\n",
+                escape_seatbelt_string(path)
+            ));
         }
     }
 
     profile.push_str(")\n");
     profile
+}
+
+fn escape_seatbelt_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_seatbelt_profile;
+
+    #[test]
+    fn escapes_paths_before_inserting_them_in_a_profile() {
+        let profile = generate_seatbelt_profile(&["secret\"file\\name".to_owned()]);
+
+        assert!(profile.contains("(literal \"secret\\\"file\\\\name\")"));
+    }
 }

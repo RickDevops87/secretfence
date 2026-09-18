@@ -11,7 +11,7 @@
 
 ---
 
-A Rust CLI that detects secrets in your project and protects them from AI coding tools through three layers: **ignore file generation**, **real-time hook scanning**, and **OS-level process sandboxing**.
+A Rust CLI that detects secrets in your project and reduces their exposure to AI coding tools through ignore-file generation, Claude Code pre-tool checks, and a macOS process sandbox.
 
 Fully local. No accounts. No API calls. Everything runs on your machine.
 
@@ -27,16 +27,16 @@ Every AI coding tool has full filesystem access. Your `.env`, your private keys,
 | [.llmignore](https://github.com/llmignore-spec/llmignore-spec) | Universal ignore file spec | Yes | No &mdash; nothing enforces it |
 | Secret managers (1Password, Vault) | Remove secrets from disk | Yes | Yes &mdash; but requires infra changes |
 
-**The gap:** No tool offers fully local, real-time secret scanning with OS-level enforcement.
+**The gap:** Most local ignore files are advisory. Secretfence adds local scanning and, on macOS, an OS-level filesystem boundary for processes it launches.
 
 ## Three Layers of Protection
 
 ```
-  Layer 1: SCAN            Layer 2: HOOK             Layer 3: SANDBOX
+  Layer 1: SCAN            Layer 2: CLAUDE HOOK      Layer 3: macOS SANDBOX
  ──────────────────       ──────────────────        ──────────────────
-  Detect secrets           Real-time scanning        OS-level isolation
-  Generate ignore files    Block before AI reads     Kernel-enforced deny
-  Verify live secrets      <50ms per check           Cannot be bypassed
+  Detect secrets           Check tool payloads       Process isolation
+  Generate ignore files    Block matched access      Deny configured file reads
+  Verify live secrets      Claude Code only          macOS only
 
   sf scan --fix            sf hook install           sf exec -- claude
 ```
@@ -61,7 +61,7 @@ sf scan --fix
 # Verify which detected secrets are actually live
 sf scan --verify
 
-# Install real-time hooks (Claude Code, Cursor, Gemini CLI)
+# Install Claude Code's PreToolUse hook (and an advisory Cursor rule when applicable)
 sf hook install
 
 # Run your AI tool in a sandboxed process
@@ -114,9 +114,9 @@ $ sf scan --fix
 
 | AI Tool | Ignore Format | `scan --fix` | `hook install` |
 |---------|:-------------|:---:|:---:|
-| Claude Code | `.claude/settings.json` | Yes | Yes |
-| Cursor | `.cursorignore` | Yes | Yes |
-| Gemini CLI | `.geminiignore` | Yes | Yes |
+| Claude Code | `.claude/settings.json` | Yes | Yes — executable `PreToolUse` hook |
+| Cursor | `.cursorignore` | Yes | Advisory project rule only |
+| Gemini CLI | `.geminiignore` | Yes | Not implemented |
 | JetBrains AI | `.aiignore` | Yes | Planned |
 | Windsurf | `.codeiumignore` | Yes | Planned |
 | Aider | `.aiderignore` | Yes | Planned |
@@ -127,7 +127,7 @@ $ sf scan --fix
 
 ## Layer 2: Hook Scanning
 
-Install real-time hooks that intercept every file read, file write, and shell command *before* the AI executes it.
+`sf hook install` installs an executable `PreToolUse` hook for Claude Code. It checks matching Claude Code tool payloads before execution. If a project already has `.cursor/`, it also writes an advisory Cursor rule; Cursor does not expose an executable hook through this integration, so that rule is not enforcement.
 
 ```
 $ sf hook install
@@ -135,7 +135,7 @@ $ sf hook install
   Installing secretfence hooks...
 
     Claude Code     PreToolUse hook installed
-    Cursor          hook installed
+    Cursor          advisory project rule installed
 ```
 
 When the AI tries to read a secret:
@@ -151,7 +151,7 @@ All pattern matching runs locally. Nothing leaves your machine.
 
 ## Layer 3: Process Sandbox
 
-Run your AI tool inside an OS-level sandbox that **physically prevents** file reads. Even `cat .env` through a shell command gets denied by the kernel.
+On macOS, run an AI tool inside a Seatbelt sandbox that denies configured file reads. Even `cat .env` through a shell command is denied by the kernel. On Linux and Windows, `sf exec` only scrubs matching environment variables; it does not enforce the deny-path list.
 
 ```bash
 sf exec -- claude                              # Auto-detect secrets, sandbox the process
@@ -176,11 +176,11 @@ cat: .env: Operation not permitted
 
 | Platform | Mechanism | Enforcement Level |
 |:---------|:----------|:------------------|
-| **macOS** | `sandbox-exec` (Seatbelt profiles) | Kernel-enforced &mdash; `EPERM` on denied files |
-| **Linux** | Landlock LSM (kernel 5.13+) | Kernel-enforced &mdash; `EPERM` on denied files |
-| **Windows** | Env var scrubbing + ignore files + hooks | Best-effort (no kernel sandbox) |
+| **macOS** | `sandbox-exec` (Seatbelt profiles) | Kernel-enforced for configured paths |
+| **Linux** | Environment-variable scrubbing | Best-effort; deny paths are not enforced |
+| **Windows** | Environment-variable scrubbing | Best-effort; deny paths are not enforced |
 
-On macOS and Linux, the sandboxed process gets `EPERM` (Permission Denied) regardless of which binary tries the read &mdash; `cat`, `python`, `node`, or the AI tool itself. This cannot be bypassed from userspace.
+On macOS, a process launched through `sf exec` receives `EPERM` for configured paths regardless of which binary tries the read &mdash; `cat`, `python`, `node`, or the AI tool itself. This boundary only covers that launched process and its children.
 
 ---
 
@@ -284,8 +284,8 @@ All detection runs locally using precompiled regex. Custom rules via `.secretfen
 | | secretfence | ggshield ai-hook | aiignore-cli | .llmignore |
 |:---|:---:|:---:|:---:|:---:|
 | Fully local (no account) | **Yes** | No | Yes | Yes |
-| Real-time hook scanning | **Yes** | Yes | No | No |
-| OS-level sandboxing | **Yes** | No | No | No |
+| Executable pre-tool hook | Claude Code | Yes | No | No |
+| OS-level sandboxing | macOS only | No | No | No |
 | Secret verification | **Yes** (opt-in) | Yes | No | No |
 | Content pattern matching | 35+ rules | 500+ rules | No | No |
 | File path detection | 17 rule groups | No | Yes | No |
@@ -303,7 +303,7 @@ All detection runs locally using precompiled regex. Custom rules via `.secretfen
 ### Where secretfence wins
 
 - **Fully local** &mdash; no account, no API calls, no network access (unless `--verify`)
-- **OS-level sandboxing** &mdash; kernel-enforced file access denial, not just advisory hooks
+- **macOS sandboxing** &mdash; kernel-enforced file access denial for processes launched with `sf exec`
 - **Single binary** &mdash; `cargo install` and go, no Python/pip/venv
 - **Web3-native** &mdash; built-in profiles for Foundry, Hardhat, and blockchain development
 
@@ -317,7 +317,7 @@ Contributions welcome. Areas where help is most needed:
 - Content detection rules for ecosystems we're missing
 - Windows sandbox improvements (Job objects, restricted tokens)
 - CI/CD integrations (GitHub Actions, pre-commit hooks)
-- Linux Landlock implementation
+- Linux filesystem sandboxing (Landlock or equivalent)
 
 ```bash
 git clone https://github.com/solhosty/secretfence

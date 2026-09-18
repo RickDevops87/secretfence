@@ -2,8 +2,6 @@ mod profiles;
 
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "linux")]
-mod linux;
 
 use std::path::Path;
 
@@ -24,7 +22,10 @@ pub fn exec_sandboxed(config: &SandboxConfig, project_dir: &Path, dry_run: bool)
         return Ok(());
     }
 
-    println!("\n  {} Starting sandboxed process...\n", "secretfence".cyan().bold());
+    println!(
+        "\n  {} Starting protected process...\n",
+        "secretfence".cyan().bold()
+    );
 
     // Resolve absolute paths for deny list
     let abs_deny: Vec<String> = config
@@ -51,7 +52,12 @@ pub fn exec_sandboxed(config: &SandboxConfig, project_dir: &Path, dry_run: bool)
 
     #[cfg(target_os = "linux")]
     {
-        linux::exec_sandboxed(&abs_deny, &config.deny_env, &config.command)?;
+        eprintln!(
+            "[secretfence] {} Linux filesystem sandboxing is not implemented; denied paths are not enforced.",
+            "WARNING:".yellow()
+        );
+        eprintln!("[secretfence] Using best-effort environment-variable scrubbing only.\n");
+        exec_best_effort(&config.deny_env, &config.command)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -68,7 +74,11 @@ pub fn exec_sandboxed(config: &SandboxConfig, project_dir: &Path, dry_run: bool)
     Ok(())
 }
 
-#[cfg(any(target_os = "windows", not(any(target_os = "macos", target_os = "linux"))))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "windows",
+    not(any(target_os = "macos", target_os = "linux"))
+))]
 fn exec_best_effort(deny_env: &[String], command: &[String]) -> Result<()> {
     use std::process::Command;
 
@@ -109,7 +119,10 @@ fn matches_env_pattern(key: &str, pattern: &str) -> bool {
 }
 
 fn print_dry_run(config: &SandboxConfig) {
-    println!("\n  {} Dry run — sandbox config:\n", "secretfence".cyan().bold());
+    println!(
+        "\n  {} Dry run — sandbox config:\n",
+        "secretfence".cyan().bold()
+    );
 
     println!("  Denied file paths:");
     for path in &config.deny_paths {
@@ -126,7 +139,7 @@ fn print_dry_run(config: &SandboxConfig) {
     let platform = if cfg!(target_os = "macos") {
         "macOS (sandbox-exec / Seatbelt)"
     } else if cfg!(target_os = "linux") {
-        "Linux (Landlock LSM)"
+        "Linux (best-effort environment-variable scrubbing; denied paths are not enforced)"
     } else if cfg!(target_os = "windows") {
         "Windows (best-effort env scrubbing)"
     } else {
@@ -134,4 +147,17 @@ fn print_dry_run(config: &SandboxConfig) {
     };
 
     println!("  Sandbox: {}\n", platform.green());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matches_env_pattern;
+
+    #[test]
+    fn matches_environment_variable_patterns() {
+        assert!(matches_env_pattern("DATABASE_URL", "DATABASE_URL"));
+        assert!(matches_env_pattern("OPENAI_API_KEY", "*_KEY"));
+        assert!(matches_env_pattern("DEPLOYER_SECRET_VALUE", "*SECRET*"));
+        assert!(!matches_env_pattern("PATH", "*_KEY"));
+    }
 }

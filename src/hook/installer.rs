@@ -8,7 +8,7 @@ pub fn install_hooks(project_dir: &Path, tool_filter: Option<&str>) -> Result<()
     let filter: Option<Vec<&str>> = tool_filter.map(|f| f.split(',').collect());
     let mut installed = false;
 
-    println!("\n  Installing secretfence hooks...\n");
+    println!("\n  Installing secretfence protections...\n");
 
     // Claude Code
     if filter.as_ref().map_or(true, |f| f.iter().any(|t| t.eq_ignore_ascii_case("claude"))) {
@@ -26,15 +26,16 @@ pub fn install_hooks(project_dir: &Path, tool_filter: Option<&str>) -> Result<()
         }
     }
 
-    // Cursor
+    // Cursor has no executable pre-tool hook. Install an advisory project rule
+    // rather than representing it as an intercepted tool call.
     if filter.as_ref().map_or(true, |f| f.iter().any(|t| t.eq_ignore_ascii_case("cursor"))) {
         match install_cursor_hook(project_dir) {
             Ok(true) => {
-                println!("    {:<15} hook installed", "Cursor".cyan());
+                println!("    {:<15} advisory project rule installed", "Cursor".cyan());
                 installed = true;
             }
             Ok(false) => {
-                println!("    {:<15} already installed", "Cursor".cyan());
+                println!("    {:<15} advisory project rule already installed", "Cursor".cyan());
             }
             Err(e) => {
                 eprintln!("    {:<15} {} {}", "Cursor".cyan(), "error:".red(), e);
