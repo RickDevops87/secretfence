@@ -16,6 +16,7 @@ pub fn exec_sandboxed(
     )?;
 
     let masked = expand_existing_paths(deny_paths)?;
+    let sandbox_cwd = safe_working_dir(project_dir, &masked);
 
     let (cmd, args) = command
         .split_first()
@@ -34,7 +35,7 @@ pub fn exec_sandboxed(
         .arg("--proc")
         .arg("/proc")
         .arg("--chdir")
-        .arg(project_dir);
+        .arg(&sandbox_cwd);
 
     for path in &masked {
         if path.is_dir() {
@@ -62,6 +63,15 @@ pub fn exec_sandboxed(
     }
 
     Ok(())
+}
+
+fn safe_working_dir(project_dir: &Path, masked: &[PathBuf]) -> PathBuf {
+    let blocked = masked.iter().any(|deny| project_dir.starts_with(deny));
+    if blocked {
+        PathBuf::from("/tmp")
+    } else {
+        project_dir.to_path_buf()
+    }
 }
 
 fn find_bwrap() -> Option<PathBuf> {
