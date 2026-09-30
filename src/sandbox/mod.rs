@@ -3,6 +3,9 @@ mod profiles;
 #[cfg(target_os = "macos")]
 mod macos;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 use std::path::Path;
 
 use anyhow::Result;
@@ -52,12 +55,7 @@ pub fn exec_sandboxed(config: &SandboxConfig, project_dir: &Path, dry_run: bool)
 
     #[cfg(target_os = "linux")]
     {
-        eprintln!(
-            "[secretfence] {} Linux filesystem sandboxing is not implemented; denied paths are not enforced.",
-            "WARNING:".yellow()
-        );
-        eprintln!("[secretfence] Using best-effort environment-variable scrubbing only.\n");
-        exec_best_effort(&config.deny_env, &config.command)?;
+        linux::exec_sandboxed(&abs_deny, &config.deny_env, &config.command, project_dir)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -75,9 +73,8 @@ pub fn exec_sandboxed(config: &SandboxConfig, project_dir: &Path, dry_run: bool)
 }
 
 #[cfg(any(
-    target_os = "linux",
     target_os = "windows",
-    not(any(target_os = "macos", target_os = "linux"))
+    not(any(target_os = "macos", target_os = "linux", target_os = "windows"))
 ))]
 fn exec_best_effort(deny_env: &[String], command: &[String]) -> Result<()> {
     use std::process::Command;
@@ -139,7 +136,7 @@ fn print_dry_run(config: &SandboxConfig) {
     let platform = if cfg!(target_os = "macos") {
         "macOS (sandbox-exec / Seatbelt)"
     } else if cfg!(target_os = "linux") {
-        "Linux (best-effort environment-variable scrubbing; denied paths are not enforced)"
+        "Linux (bubblewrap mount namespace; denied paths are masked)"
     } else if cfg!(target_os = "windows") {
         "Windows (best-effort env scrubbing)"
     } else {

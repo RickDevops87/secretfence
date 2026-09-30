@@ -32,11 +32,11 @@ Every AI coding tool has full filesystem access. Your `.env`, your private keys,
 ## Three Layers of Protection
 
 ```
-  Layer 1: SCAN            Layer 2: CLAUDE HOOK      Layer 3: macOS SANDBOX
+  Layer 1: SCAN            Layer 2: CLAUDE HOOK      Layer 3: OS SANDBOX
  ──────────────────       ──────────────────        ──────────────────
   Detect secrets           Check tool payloads       Process isolation
   Generate ignore files    Block matched access      Deny configured file reads
-  Verify live secrets      Claude Code only          macOS only
+  Verify live secrets      Claude Code only          macOS + Linux
 
   sf scan --fix            sf hook install           sf exec -- claude
 ```
@@ -151,7 +151,7 @@ All pattern matching runs locally. Nothing leaves your machine.
 
 ## Layer 3: Process Sandbox
 
-On macOS, run an AI tool inside a Seatbelt sandbox that denies configured file reads. Even `cat .env` through a shell command is denied by the kernel. On Linux and Windows, `sf exec` only scrubs matching environment variables; it does not enforce the deny-path list.
+On macOS, `sf exec` uses Seatbelt to deny configured file reads. On Linux, it uses Bubblewrap mount namespaces to mask denied files/directories from the launched process and isolates `/proc` with a PID namespace. Windows currently remains best-effort environment-variable scrubbing only.
 
 ```bash
 sf exec -- claude                              # Auto-detect secrets, sandbox the process
@@ -177,10 +177,10 @@ cat: .env: Operation not permitted
 | Platform | Mechanism | Enforcement Level |
 |:---------|:----------|:------------------|
 | **macOS** | `sandbox-exec` (Seatbelt profiles) | Kernel-enforced for configured paths |
-| **Linux** | Environment-variable scrubbing | Best-effort; deny paths are not enforced |
+| **Linux** | Bubblewrap mount namespace + PID namespace | Denied paths are masked from the launched process |
 | **Windows** | Environment-variable scrubbing | Best-effort; deny paths are not enforced |
 
-On macOS, a process launched through `sf exec` receives `EPERM` for configured paths regardless of which binary tries the read &mdash; `cat`, `python`, `node`, or the AI tool itself. This boundary only covers that launched process and its children.
+On macOS, configured reads are denied by Seatbelt. On Linux, denied directories are over-mounted with empty tmpfs instances and denied files are masked with `/dev/null`; a private PID namespace prevents simple `/proc/<pid>/root` escape back to the host view. This boundary covers the launched process and its children.
 
 ---
 
@@ -285,7 +285,7 @@ All detection runs locally using precompiled regex. Custom rules via `.secretfen
 |:---|:---:|:---:|:---:|:---:|
 | Fully local (no account) | **Yes** | No | Yes | Yes |
 | Executable pre-tool hook | Claude Code | Yes | No | No |
-| OS-level sandboxing | macOS only | No | No | No |
+| OS-level sandboxing | macOS + Linux | No | No | No |
 | Secret verification | **Yes** (opt-in) | Yes | No | No |
 | Content pattern matching | 35+ rules | 500+ rules | No | No |
 | File path detection | 17 rule groups | No | Yes | No |
@@ -303,7 +303,7 @@ All detection runs locally using precompiled regex. Custom rules via `.secretfen
 ### Where secretfence wins
 
 - **Fully local** &mdash; no account, no API calls, no network access (unless `--verify`)
-- **macOS sandboxing** &mdash; kernel-enforced file access denial for processes launched with `sf exec`
+- **OS sandboxing** &mdash; macOS Seatbelt plus Linux Bubblewrap mount/PID isolation for processes launched with `sf exec`
 - **Single binary** &mdash; `cargo install` and go, no Python/pip/venv
 - **Web3-native** &mdash; built-in profiles for Foundry, Hardhat, and blockchain development
 
@@ -317,7 +317,7 @@ Contributions welcome. Areas where help is most needed:
 - Content detection rules for ecosystems we're missing
 - Windows sandbox improvements (Job objects, restricted tokens)
 - CI/CD integrations (GitHub Actions, pre-commit hooks)
-- Linux filesystem sandboxing (Landlock or equivalent)
+- Harden Linux sandboxing further (Landlock/seccomp layers where useful)
 
 ```bash
 git clone https://github.com/solhosty/secretfence
